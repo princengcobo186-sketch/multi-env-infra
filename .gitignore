@@ -21,3 +21,6 @@ plan.json
 .idea/
 .vscode/
 .DS_Store
+
+# Modules don't pin providers; the Terragrunt stack that consumes them does.
+modules/**/.terraform.lock.hcl
