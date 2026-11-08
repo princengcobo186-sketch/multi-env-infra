@@ -182,6 +182,7 @@ data "aws_iam_policy_document" "apply" {
       "kms:*",
       "secretsmanager:*",
       "cloudwatch:*",
+      "sns:*",
     ]
     resources = ["*"]
 
