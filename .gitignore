@@ -1,0 +1,23 @@
+# Terraform / Terragrunt working dirs
+.terraform/
+.terragrunt-cache/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Plans embed secret values; never commit or upload them
+*.tfplan
+tfplan*
+plan.json
+
+# Local secrets and overrides
+*.tfvars
+!*.example.tfvars
+.env
+.env.*
+*.pem
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store

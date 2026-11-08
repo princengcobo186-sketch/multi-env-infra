@@ -1,0 +1,3 @@
+terraform 1.16.7
+terragrunt 1.1.4
+tflint 0.65.0
