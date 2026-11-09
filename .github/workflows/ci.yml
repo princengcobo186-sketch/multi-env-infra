@@ -44,6 +44,11 @@ jobs:
       - name: terragrunt hcl validate
         run: terragrunt hcl validate --working-dir live
 
+      - name: validate bootstrap
+        run: |
+          terraform -chdir=bootstrap init -backend=false -input=false
+          terraform -chdir=bootstrap validate
+
       - name: tflint
         run: |
           tflint --init

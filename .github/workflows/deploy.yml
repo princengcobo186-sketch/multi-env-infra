@@ -7,9 +7,10 @@
 # Rollback is the same workflow with the previous tag. The tag, not a branch, is deployed,
 # so what ran in the lower environment is exactly what runs in the next one.
 #
-# The job runs inside the GitHub environment named below. The apply role's trust policy
-# (bootstrap/github_oidc.tf) accepts only tokens from that environment, so no other
-# workflow or branch can assume it.
+# The job runs inside the GitHub environment named below. The apply CI user's key is an
+# environment secret, so only jobs in that environment can read it, and that user can do
+# nothing except assume the environment's apply role (bootstrap/ci_access.tf). Restrict each
+# environment to `main` and `v*` tags so no other branch can run a modified workflow.
 name: Deploy
 
 on:
@@ -49,7 +50,6 @@ jobs:
     environment: ${{ inputs.environment }}
     permissions:
       contents: read
-      id-token: write
     env:
       TAG: ${{ inputs.tag }}
       ENVIRONMENT: ${{ inputs.environment }}
@@ -61,11 +61,13 @@ jobs:
       - name: Validate inputs and configuration
         env:
           APPLY_ROLE_ARN: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         run: |
           [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag must look like vX.Y.Z" >&2; exit 1; }
           case "${ENVIRONMENT}" in dev | stage | prod) ;; *) echo "unknown environment" >&2; exit 1 ;; esac
           [ -n "${TG_ACCOUNT_ID}" ] || { echo "Repository variable AWS_ACCOUNT_ID is not set. Apply bootstrap/ first (see README)." >&2; exit 1; }
           [ -n "${APPLY_ROLE_ARN}" ] || { echo "Environment variable AWS_APPLY_ROLE_ARN is not set on the '${ENVIRONMENT}' environment." >&2; exit 1; }
+          [ -n "${KEY_ID}" ] || { echo "Environment secret AWS_ACCESS_KEY_ID is not set on '${ENVIRONMENT}'. Run scripts/ci-key.sh." >&2; exit 1; }
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -98,7 +100,10 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          role-duration-seconds: 3600
           aws-region: ${{ env.AWS_REGION }}
 
       # `run --all` orders units by dependency (vpc and notifications before alb and rds)

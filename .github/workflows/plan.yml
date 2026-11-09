@@ -1,9 +1,9 @@
 # Read-only plan of dev on every pull request, so reviewers can read the diff before merge.
 #
 # Uses the per-environment *plan* role: read-only AWS access plus that environment's state
-# prefix. Its trust policy accepts only this repository's pull_request tokens (see
-# bootstrap/github_oidc.tf). Skipped, not failed, until the bootstrap has been applied and
-# the repository variables below are set.
+# prefix. The job holds the plan CI user's key (repository secrets) whose only permission is
+# to assume that role (bootstrap/ci_access.tf). Skipped, not failed, until the bootstrap has
+# been applied and the repository variables and secrets are set (see docs/operations.md).
 name: Plan
 
 on:
@@ -24,7 +24,7 @@ concurrency:
 jobs:
   plan-dev:
     name: Plan dev
-    # Fork pull requests get no OIDC token, so they are skipped rather than left to fail.
+    # Fork pull requests are given no secrets, so they are skipped rather than left to fail.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       vars.AWS_PLAN_ROLE_ARN_DEV != '' &&
@@ -33,7 +33,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      id-token: write
     env:
       ENVIRONMENT: dev
       TG_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
@@ -57,7 +56,10 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
+          aws-access-key-id: ${{ secrets.AWS_PLAN_ACCESS_KEY_ID_DEV }}
+          aws-secret-access-key: ${{ secrets.AWS_PLAN_SECRET_ACCESS_KEY_DEV }}
           role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN_DEV }}
+          role-duration-seconds: 3600
           aws-region: ${{ env.AWS_REGION }}
 
       # The full plan goes to the job log only. Plans and plan files are never uploaded as
