@@ -179,3 +179,7 @@ account settings. The state bucket and CI roles are left in place.
 - Add an application stack that consumes the load balancer and database.
 - Account-per-environment layout and an automated promotion-order check.
 - Infrastructure security scanning in CI.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
