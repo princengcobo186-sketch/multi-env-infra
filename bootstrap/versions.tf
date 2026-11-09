@@ -9,8 +9,17 @@ terraform {
     }
   }
 
-  # Intentionally no backend: this layer creates the state bucket, so it starts on
-  # local state. See README.md for migrating it into the bucket afterwards.
+  # This layer creates the state bucket, so its first apply ran on local state and was then
+  # migrated here. The bucket name contains the account ID and this repository is public, so it
+  # is not committed: pass it at init time (see README.md).
+  #
+  # The bootstrap/ key sits outside every <env>/ prefix, so no CI role can read or change it.
+  backend "s3" {
+    key          = "bootstrap/terraform.tfstate"
+    region       = "eu-north-1"
+    use_lockfile = true
+    encrypt      = true
+  }
 }
 
 provider "aws" {
