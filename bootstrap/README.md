@@ -23,7 +23,7 @@ environment or tightening policies from CloudTrail data.
 
 ## Run it
 
-Prerequisites: an AWS account with `af-south-1` enabled, an admin SSO profile, and a
+Prerequisites: an AWS account with `eu-north-1` enabled (it is by default), an admin profile, and a
 GitHub repository in `owner/name` form.
 
 ```sh
@@ -47,7 +47,7 @@ terraform {
   backend "s3" {
     bucket       = "<state_bucket output>"
     key          = "bootstrap/terraform.tfstate"
-    region       = "af-south-1"
+    region       = "eu-north-1"
     use_lockfile = true
     encrypt      = true
   }

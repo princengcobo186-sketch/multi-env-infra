@@ -1,7 +1,7 @@
 data "aws_caller_identity" "current" {}
 
 # Resolves the regional ELB account that is allowed to write access logs. Correct for
-# opt-in regions such as af-south-1, where the principal differs from other regions.
+# every region (the principal differs per region), including eu-north-1.
 data "aws_elb_service_account" "this" {}
 
 locals {

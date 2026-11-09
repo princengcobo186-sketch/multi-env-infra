@@ -1,7 +1,7 @@
 mock_provider "aws" {
   mock_data "aws_availability_zones" {
     defaults = {
-      names = ["af-south-1a", "af-south-1b", "af-south-1c"]
+      names = ["eu-north-1a", "eu-north-1b", "eu-north-1c"]
     }
   }
 

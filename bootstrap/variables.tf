@@ -1,7 +1,7 @@
 variable "region" {
   description = "AWS region for the state bucket and all environments."
   type        = string
-  default     = "af-south-1"
+  default     = "eu-north-1"
 }
 
 variable "project" {

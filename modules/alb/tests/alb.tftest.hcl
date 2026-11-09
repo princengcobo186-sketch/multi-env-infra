@@ -7,7 +7,7 @@ mock_provider "aws" {
 
   mock_data "aws_elb_service_account" {
     defaults = {
-      arn = "arn:aws:iam::098369216593:root"
+      arn = "arn:aws:iam::111122223333:root"
     }
   }
 }
@@ -33,7 +33,7 @@ run "certificate_enables_https_and_redirect" {
   command = plan
 
   variables {
-    certificate_arn = "arn:aws:acm:af-south-1:111122223333:certificate/00000000-0000-0000-0000-000000000000"
+    certificate_arn = "arn:aws:acm:eu-north-1:111122223333:certificate/00000000-0000-0000-0000-000000000000"
   }
 
   assert {
