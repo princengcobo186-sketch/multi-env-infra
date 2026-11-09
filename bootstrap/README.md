@@ -1,7 +1,8 @@
 # bootstrap
 
-One-time layer that creates what everything else depends on. It runs once, with admin
-credentials, on **local state**, because it creates the bucket that holds all other state.
+One-time layer that creates what everything else depends on. It is applied with admin
+credentials. Its first apply uses **local state**, because it creates the bucket that holds
+all other state; the state is then migrated into that bucket (see below).
 
 ## What it creates
 
@@ -24,7 +25,7 @@ AWS resources: `ReadOnlyAccess` and the workload wildcards are account-wide. The
 gaps are listed in `ci_access.tf` and should be closed by moving to an account per
 environment or tightening policies from CloudTrail data.
 
-## Run it
+## Run it (first time)
 
 Prerequisites: an AWS account with `eu-north-1` enabled (it is by default) and an admin profile.
 
@@ -50,26 +51,24 @@ rotation tool (the new key is stored before the old one is deleted):
 ./scripts/ci-key.sh <owner>/<repo> dev plan      # repository secrets for pull-request plans
 ```
 
-## Migrate this layer's own state into the bucket (recommended)
+## Where this layer's state lives
 
-Local state for the bucket's own definition is a single point of loss. After the first
-apply, add this block to `versions.tf` and migrate:
-
-```hcl
-terraform {
-  backend "s3" {
-    bucket       = "<state_bucket output>"
-    key          = "bootstrap/terraform.tfstate"
-    region       = "eu-north-1"
-    use_lockfile = true
-    encrypt      = true
-  }
-}
-```
+After the first apply the state is migrated into the bucket it created, so it is versioned
+and no longer a single file on one machine. `versions.tf` declares the backend without a
+bucket: the name contains the account ID and this repository is public, so it is passed at
+init time.
 
 ```sh
-terraform init -migrate-state
+export AWS_PROFILE=<admin-profile>
+cd bootstrap
+B="multi-env-infra-tfstate-$(aws sts get-caller-identity --query Account --output text)-eu-north-1"
+
+terraform init -backend-config="bucket=${B}"                   # every later run
+terraform init -migrate-state -force-copy -backend-config="bucket=${B}"   # one time, from local state
+terraform plan                                                 # expect: No changes
 ```
+
+Delete the leftover local `terraform.tfstate*` files after migrating.
 
 The `bootstrap/` key sits outside every `<env>/` prefix, so no CI role can read or modify
 it. Only admin credentials can change this layer.
@@ -78,4 +77,5 @@ it. Only admin credentials can change this layer.
 
 - Bad apply: re-apply the previous commit. IAM and bucket settings are idempotent.
 - Bucket destroy is blocked by `prevent_destroy`. Removing it is a deliberate code change.
-- Corrupted state object: restore a previous version from S3 versioning (kept 90 days).
+- Corrupted state object: restore a previous version from S3 versioning (kept 90 days). This
+  includes this layer's own state at `bootstrap/terraform.tfstate`.
