@@ -8,9 +8,12 @@ credentials, on **local state**, because it creates the bucket that holds all ot
 | Resource | Purpose |
 |---|---|
 | S3 state bucket | Versioned, SSE-S3 encrypted, public access blocked, TLS-only, `prevent_destroy` |
-| GitHub OIDC provider | Lets CI authenticate without long-lived keys (skip with `create_github_oidc_provider=false` if one exists) |
-| `<project>-<env>-plan` roles | Assumable from any PR in the repo. Read-only plus own state prefix. |
-| `<project>-<env>-apply` roles | Assumable only from the matching GitHub `environment:`. Scoped service, region and IAM-name permissions. |
+| `<project>-<env>-plan-ci` / `-apply-ci` IAM users | One each per environment. Their only permission is `sts:AssumeRole` into their own role. No access keys are created here (see below). |
+| `<project>-<env>-plan` roles | Assumable only by that environment's plan user. Read-only plus own state prefix. |
+| `<project>-<env>-apply` roles | Assumable only by that environment's apply user. Scoped service, region and IAM-name permissions. |
+
+No GitHub OIDC provider: the account's managed service control policy denies `iam:*Provider*`.
+`ci_access.tf` describes how to move to OIDC if that ever changes.
 
 State locking uses S3 native locking (`use_lockfile`), so there is no DynamoDB table.
 
@@ -18,13 +21,12 @@ State locking uses S3 native locking (`use_lockfile`), so there is no DynamoDB t
 
 Each role can read and write only `s3://<bucket>/<env>/*`. This separates state, but not
 AWS resources: `ReadOnlyAccess` and the workload wildcards are account-wide. The remaining
-gaps are listed in `github_oidc.tf` and should be closed by moving to an account per
+gaps are listed in `ci_access.tf` and should be closed by moving to an account per
 environment or tightening policies from CloudTrail data.
 
 ## Run it
 
-Prerequisites: an AWS account with `eu-north-1` enabled (it is by default), an admin profile, and a
-GitHub repository in `owner/name` form.
+Prerequisites: an AWS account with `eu-north-1` enabled (it is by default) and an admin profile.
 
 ```sh
 export AWS_PROFILE=<admin-profile>
@@ -32,9 +34,20 @@ aws sts get-caller-identity            # confirm the account before anything els
 
 cd bootstrap
 terraform init
-terraform plan -var github_repository=owner/name -out=tfplan   # read every line
+terraform plan -out=tfplan             # read every line
 terraform apply tfplan
 rm -f tfplan                           # plans embed secrets; never commit or upload them
+```
+
+## Create the CI access keys (outside Terraform)
+
+Terraform would keep an access key's secret in state in plain text, so keys are created by a
+script that pipes them straight into GitHub secrets and never prints them. It is also the
+rotation tool (the new key is stored before the old one is deleted):
+
+```sh
+./scripts/ci-key.sh <owner>/<repo> dev apply     # environment secrets on 'dev'
+./scripts/ci-key.sh <owner>/<repo> dev plan      # repository secrets for pull-request plans
 ```
 
 ## Migrate this layer's own state into the bucket (recommended)

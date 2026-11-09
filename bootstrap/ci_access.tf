@@ -1,48 +1,45 @@
-# CI authenticates to AWS with GitHub's OIDC tokens: no long-lived access keys exist.
+# CI identities. Two layers per environment:
 #
-# Two roles per environment:
-#   plan  - assumable from any pull request in the repo; read-only plus its own state prefix.
-#   apply - assumable only by jobs that declare `environment: <env>`, so GitHub environment
-#           protection (where the plan supports it) and branch rules gate every apply.
+#   IAM user (plan / apply) - holds a long-lived access key kept in GitHub secrets, and has
+#                             exactly one permission: sts:AssumeRole into its own role.
+#   IAM role (plan / apply) - holds the real permissions; trusts only its own user.
+#
+# WHY NOT GITHUB OIDC: AWS's managed service control policy for this account denies
+# iam:*Provider*, so the GitHub OIDC provider cannot be created. OIDC would remove the
+# long-lived keys; it needs "advanced features" activated on the AWS organization, which is
+# irreversible. If that is ever activated, replace the users with an OIDC provider and trust
+# `token.actions.githubusercontent.com:sub` (repo:<owner>/<repo>:environment:<env> for apply,
+# repo:<owner>/<repo>:pull_request for plan), and delete the users and their keys.
+#
+# Access keys are NOT created here: Terraform would store the secret in state in plain text.
+# scripts/ci-key.sh creates and rotates them and writes them straight into GitHub secrets.
+#
+# What contains the long-lived key: an apply key sits in a GitHub *environment* secret, so
+# only jobs running in that environment can read it. Restrict each environment to `main` and
+# `v*` tags (see docs/operations.md), otherwise any branch with write access could run a
+# modified workflow against it. A plan key is read-only by construction (plan role).
 
-locals {
-  github_oidc_url = "token.actions.githubusercontent.com"
+resource "aws_iam_user" "plan" {
+  for_each = var.environments
 
-  oidc_provider_arn = (
-    var.create_github_oidc_provider
-    ? aws_iam_openid_connect_provider.github[0].arn
-    : "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/${local.github_oidc_url}"
-  )
+  name = "${var.project}-${each.key}-plan-ci"
 }
 
-resource "aws_iam_openid_connect_provider" "github" {
-  count = var.create_github_oidc_provider ? 1 : 0
+resource "aws_iam_user" "apply" {
+  for_each = var.environments
 
-  url            = "https://${local.github_oidc_url}"
-  client_id_list = ["sts.amazonaws.com"]
+  name = "${var.project}-${each.key}-apply-ci"
 }
 
 data "aws_iam_policy_document" "trust_plan" {
   for_each = var.environments
 
   statement {
-    actions = ["sts:AssumeRoleWithWebIdentity"]
+    actions = ["sts:AssumeRole"]
 
     principals {
-      type        = "Federated"
-      identifiers = [local.oidc_provider_arn]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${local.github_oidc_url}:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${local.github_oidc_url}:sub"
-      values   = ["repo:${var.github_repository}:pull_request"]
+      type        = "AWS"
+      identifiers = [aws_iam_user.plan[each.key].arn]
     }
   }
 }
@@ -51,23 +48,11 @@ data "aws_iam_policy_document" "trust_apply" {
   for_each = var.environments
 
   statement {
-    actions = ["sts:AssumeRoleWithWebIdentity"]
+    actions = ["sts:AssumeRole"]
 
     principals {
-      type        = "Federated"
-      identifiers = [local.oidc_provider_arn]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${local.github_oidc_url}:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${local.github_oidc_url}:sub"
-      values   = ["repo:${var.github_repository}:environment:${each.key}"]
+      type        = "AWS"
+      identifiers = [aws_iam_user.apply[each.key].arn]
     }
   }
 }
@@ -77,7 +62,7 @@ resource "aws_iam_role" "plan" {
 
   name               = "${var.project}-${each.key}-plan"
   assume_role_policy = data.aws_iam_policy_document.trust_plan[each.key].json
-  description        = "CI plan role for ${each.key}: read-only plus ${each.key} state prefix."
+  description        = "CI plan role for ${each.key}: read-only plus ${each.key} state prefix. Assumable only by its CI user."
 
   max_session_duration = 3600
 }
@@ -87,9 +72,44 @@ resource "aws_iam_role" "apply" {
 
   name               = "${var.project}-${each.key}-apply"
   assume_role_policy = data.aws_iam_policy_document.trust_apply[each.key].json
-  description        = "CI apply role for ${each.key}. Assumable only from the ${each.key} GitHub environment."
+  description        = "CI apply role for ${each.key}. Assumable only by its CI user."
 
   max_session_duration = 3600
+}
+
+# The user's only permission: assume its own role. The role's trust policy is the second half.
+data "aws_iam_policy_document" "assume_plan" {
+  for_each = var.environments
+
+  statement {
+    actions   = ["sts:AssumeRole"]
+    resources = [aws_iam_role.plan[each.key].arn]
+  }
+}
+
+data "aws_iam_policy_document" "assume_apply" {
+  for_each = var.environments
+
+  statement {
+    actions   = ["sts:AssumeRole"]
+    resources = [aws_iam_role.apply[each.key].arn]
+  }
+}
+
+resource "aws_iam_user_policy" "plan_assume" {
+  for_each = var.environments
+
+  name   = "assume-${var.project}-${each.key}-plan"
+  user   = aws_iam_user.plan[each.key].name
+  policy = data.aws_iam_policy_document.assume_plan[each.key].json
+}
+
+resource "aws_iam_user_policy" "apply_assume" {
+  for_each = var.environments
+
+  name   = "assume-${var.project}-${each.key}-apply"
+  user   = aws_iam_user.apply[each.key].name
+  policy = data.aws_iam_policy_document.assume_apply[each.key].json
 }
 
 # --- State access: the isolation boundary between environments -------------------------
