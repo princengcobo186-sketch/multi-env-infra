@@ -62,15 +62,36 @@ the first apply (see `bootstrap/README.md`).
 
 ## 4. CI/CD and identity
 
-GitHub Actions assumes AWS roles through OIDC. Two roles per environment:
+Two IAM users and two roles per environment. A user holds an access key and can do exactly
+one thing: assume its own role. The role holds the permissions.
 
-| Role | Trusted subject | Permissions |
+| Role | Assumable by | Permissions |
 |---|---|---|
-| `plan` | `repo:<repo>:pull_request` | `ReadOnlyAccess` plus the environment's state prefix |
-| `apply` | `repo:<repo>:environment:<env>` | workload services in the Region, plus the state prefix |
+| `plan` | the environment's `plan-ci` user | `ReadOnlyAccess` plus the environment's state prefix |
+| `apply` | the environment's `apply-ci` user | workload services in the Region, plus the state prefix |
 
-The apply role can only be assumed by a job that declares the matching GitHub environment, so
-branch rules and environment protection gate every change. Plan roles cannot apply.
+Apply keys are GitHub **environment** secrets, so only a job running in that environment can
+read them, and environment protection (required reviewers on prod, deployment restricted to
+`main` and `v*` tags) gates every change. Plan keys are repository secrets because plan jobs
+run on pull requests; they can only assume a read-only role. Keys are created and rotated by
+`scripts/ci-key.sh`, never by Terraform, so secrets stay out of state.
+
+### Why not GitHub OIDC
+
+OIDC would remove the long-lived keys: a job would trade GitHub's signed token for short-lived
+credentials. It is blocked here. The managed service control policy on this account (both the
+Free and Paid plan variants) denies `iam:*Provider*`, so the OIDC provider cannot be created.
+The only way to lift it is to activate advanced features on the AWS organization, which is
+irreversible and also removes the spend limit. Scoped users with assume-role were chosen
+instead because they are reversible and keep the same plan/apply role split.
+
+**Accepted trade-offs:** the keys are long-lived (rotate them with the script), and anyone with
+write access to the repository could try to read a key by running a modified workflow, which
+the environment deployment restrictions are there to prevent.
+
+*Would change if:* advanced features are activated. Then replace the users with an OIDC
+provider and trust `repo:<owner>/<repo>:environment:<env>` (apply) and
+`repo:<owner>/<repo>:pull_request` (plan), and delete the users and their keys.
 
 ### Why a plan on the pull request and not a saved plan at apply
 

@@ -17,8 +17,11 @@ checks. Nothing is deployed yet; the first deployment follows the bootstrap in
 - **DRY environments**: one shared definition per stack (`live/_envcommon/`), with each
   environment differing only in a short `env.hcl` (CIDRs, instance sizes, NAT mode,
   deletion protection).
-- **Keyless CI/CD**: GitHub Actions authenticates to AWS with OIDC. There are no stored AWS
-  access keys. Separate read-only *plan* and environment-bound *apply* roles per environment.
+- **Least-privilege CI identities**: per environment, a read-only *plan* role and an *apply*
+  role, each assumable only by its own IAM user, whose only permission is `sts:AssumeRole`.
+  No admin credentials are stored in GitHub, and keys are created and rotated by a script that
+  never prints them. (GitHub OIDC would be keyless, but the account's managed policy blocks the
+  OIDC provider; see [docs/architecture.md](docs/architecture.md).)
 - **Release-based promotion**: a version tag is the artifact. The same tag is promoted
   dev -> stage -> prod, never rebuilt. Rollback is redeploying the previous tag.
 - **Secure defaults**: encrypted state with versioning and native S3 locking, encrypted and
@@ -30,7 +33,7 @@ checks. Nothing is deployed yet; the first deployment follows the bootstrap in
 ```mermaid
 flowchart LR
     dev([Developer]) -->|pull request| gh[GitHub Actions]
-    gh -->|OIDC token, no stored keys| sts[AWS STS]
+    gh -->|scoped CI user key + AssumeRole| sts[AWS STS]
     sts -->|plan role: read-only| plan[Plan on PR]
     sts -->|apply role: environment-bound| apply[Apply on deploy]
     plan & apply --> state[(S3 state bucket<br/>per-env prefix, native locking)]
@@ -69,10 +72,11 @@ trade-off, and what would change with an account per environment, is in
 ## Repository layout
 
 ```
-bootstrap/    one-time layer: state bucket and per-environment GitHub OIDC roles
+bootstrap/    one-time layer: state bucket, per-environment CI users and roles
 modules/      reusable Terraform modules (vpc, alb, rds, notifications), each with tests
 live/         Terragrunt: root.hcl (backend + provider), _envcommon/ (shared stacks),
               dev/ stage/ prod/ (env.hcl and one terragrunt.hcl per stack)
+scripts/      ci-key.sh: create or rotate a CI user's key straight into GitHub secrets
 docs/         architecture decisions and the operations runbook
 .github/      workflows: ci, plan, release, deploy, destroy
 ```
@@ -94,8 +98,8 @@ rollback are in [docs/operations.md](docs/operations.md).
 
 ### Prerequisites
 
-- An AWS account with `eu-north-1` available, and permission to create IAM roles, an OIDC
-  provider and an S3 bucket for the one-time bootstrap. Confirm your account plan supports
+- An AWS account with `eu-north-1` available, and permission to create IAM users and roles
+  and an S3 bucket for the one-time bootstrap. Confirm your account plan supports
   RDS, load balancers and NAT gateways before deploying.
 - [asdf](https://asdf-vm.com/); tool versions are pinned in `.tool-versions`:
   ```sh
@@ -124,10 +128,18 @@ only step done outside Actions. Use short-lived credentials and read the plan fi
 ```sh
 cd bootstrap
 terraform init
-terraform plan -var github_repository=<owner>/<repo> -out=tfplan   # read every line
+terraform plan -out=tfplan         # read every line
 terraform apply tfplan
 rm -f tfplan                       # plans embed secrets; never commit or upload them
 terraform output                   # role ARNs for the next step
+```
+
+Then create each CI user's access key. The script writes it straight into GitHub secrets
+(never printed, never in Terraform state) and is also how you rotate keys later:
+
+```sh
+for env in dev stage prod; do ./scripts/ci-key.sh <owner>/<repo> "$env" apply; done
+./scripts/ci-key.sh <owner>/<repo> dev plan
 ```
 
 ### Configure GitHub
@@ -138,11 +150,15 @@ Nothing secret lives in the repository. Set these in the repository settings:
 |---|---|---|
 | Repository variable | `AWS_ACCOUNT_ID` | the AWS account ID |
 | Repository variable | `AWS_PLAN_ROLE_ARN_DEV` | `plan_role_arns["dev"]` from bootstrap |
+| Repository secrets | `AWS_PLAN_ACCESS_KEY_ID_DEV`, `AWS_PLAN_SECRET_ACCESS_KEY_DEV` | set by `scripts/ci-key.sh <repo> dev plan` |
 | Repository secret | `ALERT_EMAILS` | comma-separated alert addresses (may be empty) |
 | Environment `dev` / `stage` / `prod` variable | `AWS_APPLY_ROLE_ARN` | that environment's `apply_role_arns` entry |
+| Environment secrets | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | set per environment by `scripts/ci-key.sh <repo> <env> apply` |
 | Environment variable | `CERTIFICATE_ARN` | ACM certificate ARN; **required for prod**, optional elsewhere |
 
-Create the `dev`, `stage` and `prod` environments, and add required reviewers to `prod`.
+Create the `dev`, `stage` and `prod` environments, add required reviewers to `prod`, and
+restrict each environment's deployment branches and tags to `main` and `v*`. That restriction
+is what stops another branch from running a modified workflow with the environment's key.
 
 ### Release and deploy
 
@@ -160,8 +176,10 @@ account settings. The state bucket and CI roles are left in place.
 
 ## Security model
 
-- **No long-lived credentials.** CI uses OIDC; plan roles trust only this repository's pull
-  requests, apply roles trust only a specific GitHub environment.
+- **Scoped CI identities.** Each CI user can only assume its own role; the role holds the
+  permissions. Apply keys are GitHub *environment* secrets, so only jobs in that environment
+  can read them. These are long-lived keys, the main gap compared with OIDC; rotate them with
+  `scripts/ci-key.sh`.
 - **Fails closed on the wrong account.** `TG_ACCOUNT_ID` is required and feeds the
   provider's `allowed_account_ids`, so credentials for another account cannot apply.
 - **State is isolated per environment** by key prefix and IAM, and is versioned and encrypted.
@@ -170,11 +188,13 @@ account settings. The state bucket and CI roles are left in place.
   uploaded.
 - **Actions are pinned by commit SHA** and updated through Dependabot pull requests.
 - **Known gaps:** the apply roles use service-level wildcards, and `ReadOnlyAccess` is
-  account-wide. Both are documented in `bootstrap/github_oidc.tf` and tightened by moving
+  account-wide. Both are documented in `bootstrap/ci_access.tf` and tightened by moving
   to an account per environment. Plan logs on a public repository are publicly readable.
 
 ## Roadmap
 
+- Replace the CI users with GitHub OIDC if advanced features are ever activated on the AWS
+  organization, which would remove the long-lived keys.
 - Tighten apply-role policies from CloudTrail data.
 - Add an application stack that consumes the load balancer and database.
 - Account-per-environment layout and an automated promotion-order check.
