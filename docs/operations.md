@@ -20,7 +20,7 @@
 3. **Configure GitHub** with the table in the README. Variables and secrets can be set with
    the GitHub CLI:
    ```sh
-   gh variable set AWS_ACCOUNT_ID --body "<account-id>"
+   gh secret set AWS_ACCOUNT_ID          # a secret, so GitHub masks it in public job logs
    gh variable set AWS_PLAN_ROLE_ARN_DEV --body "<plan role arn for dev>"
    gh secret set ALERT_EMAILS            # prompts for the value
 
@@ -82,11 +82,11 @@ change you do not recognise).
 | Symptom | Likely cause |
 |---|---|
 | `InvalidClientTokenId` in an opt-in Region while the key is valid | The Region is not enabled for the account. The CLI uses the Regional STS endpoint there. Test with `--endpoint-url https://sts.amazonaws.com`, then check enabled Regions. |
-| `TG_ACCOUNT_ID` / `get_env` error | Required environment variable missing. In CI, set the `AWS_ACCOUNT_ID` repository variable. |
+| `TG_ACCOUNT_ID` / `get_env` error | Required environment variable missing. In CI, set the `AWS_ACCOUNT_ID` repository secret. |
 | Prod fails on `PROD_CERTIFICATE_ARN` | By design: prod requires a certificate. Set `CERTIFICATE_ARN` on the `prod` environment. |
 | `not authorized to perform: sts:AssumeRole` | The key belongs to a different user than the role trusts, or the secret is stale. Re-run `scripts/ci-key.sh` for that environment and kind. |
 | `AWS_ACCESS_KEY_ID is not set` in a deploy | The environment secret is missing. Run `scripts/ci-key.sh <repo> <env> apply`. |
-| Plan job skipped | `AWS_PLAN_ROLE_ARN_DEV` or `AWS_ACCOUNT_ID` not set, or the pull request is from a fork (forks get no secrets). |
+| Plan job skipped | `AWS_PLAN_ROLE_ARN_DEV` not set, or the pull request is from a fork (forks get no secrets). |
 | `iam:CreateOpenIDConnectProvider` denied | Expected on this account: the managed SCP denies `iam:*Provider*`, which is why CI uses scoped users. See `docs/architecture.md`. |
 | Sudden `AccessDenied` on calls that worked | The account may have hit its spend limit or changed plan. Check billing settings. |
 | State lock held | A previous run was interrupted. Confirm no run is active, then `terragrunt force-unlock <id>` in that stack. |
