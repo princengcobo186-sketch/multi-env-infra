@@ -20,10 +20,13 @@ State locking uses S3 native locking (`use_lockfile`), so there is no DynamoDB t
 
 ## Isolation model (single account)
 
-Each role can read and write only `s3://<bucket>/<env>/*`. This separates state, but not
-AWS resources: `ReadOnlyAccess` and the workload wildcards are account-wide. The remaining
-gaps are listed in `ci_access.tf` and should be closed by moving to an account per
-environment or tightening policies from CloudTrail data.
+Each role can read and write only `s3://<bucket>/<env>/*`; reads of every other prefix,
+including `bootstrap/`, are explicitly denied, because `ReadOnlyAccess` would otherwise grant
+them. Other prefixes' key names remain listable (a prefix-based list deny would break
+`HeadBucket`), but their contents are not readable. This separates state, but not AWS
+resources: `ReadOnlyAccess` and the workload wildcards are account-wide. The remaining gaps
+are listed in `ci_access.tf` and should be closed by moving to an account per environment or
+tightening policies from CloudTrail data.
 
 ## Run it (first time)
 
@@ -70,8 +73,9 @@ terraform plan                                                 # expect: No chan
 
 Delete the leftover local `terraform.tfstate*` files after migrating.
 
-The `bootstrap/` key sits outside every `<env>/` prefix, so no CI role can read or modify
-it. Only admin credentials can change this layer.
+The `bootstrap/` key sits outside every `<env>/` prefix. No CI role can write it, and each
+CI role's state policy explicitly denies reading it, because the `ReadOnlyAccess` policy they
+also carry would otherwise allow it. Only admin credentials can change this layer.
 
 ## Rollback
 

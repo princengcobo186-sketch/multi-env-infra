@@ -26,14 +26,17 @@ directory fails a regex check, and `TG_ACCOUNT_ID` has no default.
 Environments share an AWS account and the `eu-north-1` Region. Isolation is by:
 
 - state key prefix `<env>/<stack>/terraform.tfstate`, with IAM limiting each role to its own
-  prefix;
+  prefix. Writes are limited by the allow statements; reads of other prefixes are blocked by an
+  explicit deny, because the `ReadOnlyAccess` policy both CI roles carry grants `s3:Get*` on
+  every object and would otherwise let a role read other environments' state;
 - per-environment CI roles and `<project>-<env>-` resource naming that the apply roles are
   scoped to;
 - non-overlapping VPC CIDRs, which keeps peering open later.
 
-**Accepted trade-off:** `ReadOnlyAccess` cannot be scoped per environment, so a plan role can
-read other environments' resources (not their state), and the apply roles use service-level
-wildcards that CloudTrail data should later tighten. This is the cost of a single account.
+**Accepted trade-offs:** `ReadOnlyAccess` cannot be scoped per environment, so a plan role can
+read other environments' AWS resources and list the key names in the state bucket (their
+contents are denied), and the apply roles use service-level wildcards that CloudTrail data
+should later tighten. This is the cost of a single account.
 
 *Would change if:* an account per environment is adopted. That removes both gaps and is the
 natural next step; the Terragrunt layout already supports it.
