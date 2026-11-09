@@ -1,0 +1,15 @@
+# Keeps the SHA-pinned actions and the bootstrap provider current via reviewed pull requests.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: terraform
+    directory: /bootstrap
+    schedule:
+      interval: weekly

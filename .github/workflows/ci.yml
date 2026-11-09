@@ -1,0 +1,82 @@
+# Static checks and mocked module tests. Needs no cloud credentials, so it is safe to run on
+# every pull request (including forks) and is reused by release.yml before a release is cut.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Placeholders so `terragrunt hcl validate` can evaluate get_env(). Never used with
+  # credentials: this workflow has no AWS access.
+  TG_ACCOUNT_ID: "000000000000"
+  PROD_CERTIFICATE_ARN: "arn:aws:acm:eu-north-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+
+jobs:
+  static:
+    name: Format and lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Tool versions come from .tool-versions, the same file developers use locally.
+      - uses: asdf-vm/actions/setup@b7bcd026f18772e44fe1026d729e1611cc435d47 # v4.0.1
+      - uses: asdf-vm/actions/install@b7bcd026f18772e44fe1026d729e1611cc435d47 # v4.0.1
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: terragrunt hcl fmt
+        run: terragrunt hcl fmt --check --working-dir live
+
+      - name: terragrunt hcl validate
+        run: terragrunt hcl validate --working-dir live
+
+      - name: tflint
+        run: |
+          tflint --init
+          for dir in bootstrap modules/*; do
+            echo "::group::tflint ${dir}"
+            tflint --chdir "${dir}" --config "${GITHUB_WORKSPACE}/.tflint.hcl" --minimum-failure-severity=warning
+            echo "::endgroup::"
+          done
+
+  test:
+    name: Module tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform-plugin-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: asdf-vm/actions/setup@b7bcd026f18772e44fe1026d729e1611cc435d47 # v4.0.1
+      - uses: asdf-vm/actions/install@b7bcd026f18772e44fe1026d729e1611cc435d47 # v4.0.1
+
+      # Every module is discovered, so a new module cannot be forgotten. The tests use
+      # mock_provider, so nothing here calls AWS.
+      - name: validate and test each module
+        run: |
+          mkdir -p "${TF_PLUGIN_CACHE_DIR}"
+          for dir in modules/*/; do
+            dir="${dir%/}"
+            echo "::group::${dir}"
+            terraform -chdir="${dir}" init -backend=false -input=false
+            terraform -chdir="${dir}" validate
+            terraform -chdir="${dir}" test
+            echo "::endgroup::"
+          done

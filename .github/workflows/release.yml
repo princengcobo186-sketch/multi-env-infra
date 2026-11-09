@@ -1,0 +1,80 @@
+# Cuts a release from a version tag, then deploys that exact tag to dev.
+#
+# The release is the artifact: a source archive of the tagged commit (modules plus live/),
+# its checksum, and a build-provenance attestation. Nothing is rebuilt later. stage and prod
+# are promoted by running deploy.yml with the same tag (see docs/operations.md).
+#
+#   git tag -a v1.2.3 -m "v1.2.3" && git push origin v1.2.3
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI at tag
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  release:
+    name: Publish release
+    needs: ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the GitHub Release
+      id-token: write # sign the provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Releases come from main only, so an unreviewed branch can never be promoted.
+      - name: Require tag to be on main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main || {
+            echo "Tag ${GITHUB_REF_NAME} is not reachable from main; refusing to release." >&2
+            exit 1
+          }
+
+      - name: Build source archive
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          archive="multi-env-infra-${TAG}.tar.gz"
+          git archive --format=tar.gz --prefix="multi-env-infra-${TAG}/" -o "${archive}" "${GITHUB_SHA}"
+          sha256sum "${archive}" > "${archive}.sha256"
+          echo "ARCHIVE=${archive}" >> "${GITHUB_ENV}"
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ env.ARCHIVE }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "${TAG}" "${ARCHIVE}" "${ARCHIVE}.sha256" \
+            --title "${TAG}" --generate-notes --verify-tag
+
+  deploy-dev:
+    name: Deploy to dev
+    needs: release
+    uses: ./.github/workflows/deploy.yml
+    with:
+      tag: ${{ github.ref_name }}
+      environment: dev
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write

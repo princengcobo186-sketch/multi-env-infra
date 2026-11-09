@@ -1,0 +1,74 @@
+# Tears down every stack in dev or stage, to stop paying for idle NAT gateways, load
+# balancers and databases. prod is excluded here on purpose: it has deletion protection and
+# final snapshots, and destroying it should be a deliberate, reviewed change to this file.
+#
+# The state bucket and CI roles live in bootstrap/ and are not touched.
+name: Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to destroy"
+        required: true
+        type: choice
+        options: [dev, stage]
+      confirm:
+        description: "Type destroy-<environment> to confirm (e.g. destroy-dev)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    name: Destroy ${{ inputs.environment }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      CONFIRM: ${{ inputs.confirm }}
+      TG_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      ALERT_EMAILS: ${{ secrets.ALERT_EMAILS }}
+    steps:
+      - name: Validate confirmation
+        run: |
+          case "${ENVIRONMENT}" in dev | stage) ;; *) echo "only dev and stage can be destroyed here" >&2; exit 1 ;; esac
+          [ "${CONFIRM}" = "destroy-${ENVIRONMENT}" ] || { echo "confirmation text did not match destroy-${ENVIRONMENT}" >&2; exit 1; }
+
+      # The workflow's own ref: run it from the tag that is deployed so the code matches state.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: asdf-vm/actions/setup@b7bcd026f18772e44fe1026d729e1611cc435d47 # v4.0.1
+      - uses: asdf-vm/actions/install@b7bcd026f18772e44fe1026d729e1611cc435d47 # v4.0.1
+
+      - name: Resolve region and certificate
+        env:
+          CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN }}
+        run: |
+          region="$(sed -n 's/^ *region *= *"\(.*\)".*/\1/p' "live/${ENVIRONMENT}/env.hcl")"
+          [ -n "${region}" ] || { echo "region not found in live/${ENVIRONMENT}/env.hcl" >&2; exit 1; }
+          echo "AWS_REGION=${region}" >> "${GITHUB_ENV}"
+          cert_var="$(echo "${ENVIRONMENT}" | tr '[:lower:]' '[:upper:]')_CERTIFICATE_ARN"
+          echo "${cert_var}=${CERTIFICATE_ARN}" >> "${GITHUB_ENV}"
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: terragrunt destroy
+        run: |
+          terragrunt run --all --non-interactive --working-dir "live/${ENVIRONMENT}" \
+            -- destroy -input=false -no-color -lock-timeout=10m

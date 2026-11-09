@@ -1,0 +1,119 @@
+# Applies one release tag to one environment. Promotion is deliberate and ordered by hand:
+#
+#   dev    deployed automatically by release.yml
+#   stage  Actions > Deploy > Run workflow, same tag, environment=stage
+#   prod   same tag, environment=prod (add required reviewers on the GitHub environment)
+#
+# Rollback is the same workflow with the previous tag. The tag, not a branch, is deployed,
+# so what ran in the lower environment is exactly what runs in the next one.
+#
+# The job runs inside the GitHub environment named below. The apply role's trust policy
+# (bootstrap/github_oidc.tf) accepts only tokens from that environment, so no other
+# workflow or branch can assume it.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to deploy (vX.Y.Z)"
+        required: true
+        type: string
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [dev, stage, prod]
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# One apply per environment at a time; a queued run waits instead of cancelling a live apply.
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.tag }} to ${{ inputs.environment }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ inputs.tag }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      TG_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      # Secret so addresses (PII) stay out of the repository; GitHub masks it in logs.
+      ALERT_EMAILS: ${{ secrets.ALERT_EMAILS }}
+    steps:
+      # Inputs reach the shell only through env vars, never interpolated into the script.
+      - name: Validate inputs and configuration
+        env:
+          APPLY_ROLE_ARN: ${{ vars.AWS_APPLY_ROLE_ARN }}
+        run: |
+          [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag must look like vX.Y.Z" >&2; exit 1; }
+          case "${ENVIRONMENT}" in dev | stage | prod) ;; *) echo "unknown environment" >&2; exit 1 ;; esac
+          [ -n "${TG_ACCOUNT_ID}" ] || { echo "Repository variable AWS_ACCOUNT_ID is not set. Apply bootstrap/ first (see README)." >&2; exit 1; }
+          [ -n "${APPLY_ROLE_ARN}" ] || { echo "Environment variable AWS_APPLY_ROLE_ARN is not set on the '${ENVIRONMENT}' environment." >&2; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require tag to be on main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor HEAD origin/main || {
+            echo "${TAG} is not reachable from main; refusing to deploy." >&2
+            exit 1
+          }
+
+      - uses: asdf-vm/actions/setup@b7bcd026f18772e44fe1026d729e1611cc435d47 # v4.0.1
+      - uses: asdf-vm/actions/install@b7bcd026f18772e44fe1026d729e1611cc435d47 # v4.0.1
+
+      # Region comes from the environment's env.hcl; the optional certificate comes from an
+      # environment variable and is passed under the name env.hcl reads.
+      - name: Resolve region and certificate
+        env:
+          CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN }}
+        run: |
+          region="$(sed -n 's/^ *region *= *"\(.*\)".*/\1/p' "live/${ENVIRONMENT}/env.hcl")"
+          [ -n "${region}" ] || { echo "region not found in live/${ENVIRONMENT}/env.hcl" >&2; exit 1; }
+          echo "AWS_REGION=${region}" >> "${GITHUB_ENV}"
+          cert_var="$(echo "${ENVIRONMENT}" | tr '[:lower:]' '[:upper:]')_CERTIFICATE_ARN"
+          echo "${cert_var}=${CERTIFICATE_ARN}" >> "${GITHUB_ENV}"
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # `run --all` orders units by dependency (vpc and notifications before alb and rds)
+      # and appends -auto-approve; the approval gate is the GitHub environment above.
+      - name: terragrunt apply
+        run: |
+          terragrunt run --all --non-interactive --working-dir "live/${ENVIRONMENT}" \
+            -- apply -input=false -no-color -lock-timeout=10m
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed"
+            echo "- Tag: \`${TAG}\`"
+            echo "- Commit: \`$(git rev-parse --short HEAD)\`"
+            echo "- Environment: \`${ENVIRONMENT}\`"
+            echo "- Rollback: run this workflow again with the previous tag."
+          } >> "${GITHUB_STEP_SUMMARY}"
