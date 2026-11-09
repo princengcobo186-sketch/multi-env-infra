@@ -115,6 +115,13 @@ resource "aws_iam_user_policy" "apply_assume" {
 # --- State access: the isolation boundary between environments -------------------------
 # A role can list and touch only keys under its own "<env>/" prefix. Put/Delete are needed
 # by plan roles too, because S3 native locking writes and removes a .tflock object.
+#
+# The allow statements alone do NOT isolate reads: the ReadOnlyAccess policy attached to both
+# CI roles grants s3:Get* on every object, so a role could read other environments' state and
+# the bootstrap state. An explicit Deny overrides any Allow, so the last statement denies
+# reads of every other prefix. Listing other prefixes is deliberately not denied: HeadBucket
+# needs s3:ListBucket without an s3:prefix, so a prefix-based deny would break Terraform. The
+# consequence is that other environments' key names are visible but their contents are not.
 
 data "aws_iam_policy_document" "state_access" {
   for_each = var.environments
@@ -135,6 +142,16 @@ data "aws_iam_policy_document" "state_access" {
     sid       = "ReadWriteOwnStateAndLock"
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
     resources = ["${aws_s3_bucket.state.arn}/${each.key}/*"]
+  }
+
+  statement {
+    sid     = "DenyReadingOtherStatePrefixes"
+    effect  = "Deny"
+    actions = ["s3:Get*"]
+    resources = concat(
+      ["${aws_s3_bucket.state.arn}/bootstrap/*"],
+      [for other in setsubtract(var.environments, [each.key]) : "${aws_s3_bucket.state.arn}/${other}/*"],
+    )
   }
 }
 
@@ -161,8 +178,10 @@ resource "aws_iam_role_policy_attachment" "apply_state" {
 
 # --- Read access for plan/refresh -------------------------------------------------------
 # NOTE: AWS ReadOnlyAccess is account-wide and cannot be scoped per environment, so a plan
-# role can read other environments' resources (not their state). Accepted trade-off for a
-# single account; a separate account per environment removes it.
+# role can read other environments' AWS resources. Their state objects are protected by the
+# explicit deny in state_access above, which overrides the s3:Get* this policy grants. The
+# resource read is an accepted trade-off for a single account; a separate account per
+# environment removes it.
 
 resource "aws_iam_role_policy_attachment" "plan_readonly" {
   for_each = var.environments

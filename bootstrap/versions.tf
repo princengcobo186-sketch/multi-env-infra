@@ -13,7 +13,8 @@ terraform {
   # migrated here. The bucket name contains the account ID and this repository is public, so it
   # is not committed: pass it at init time (see README.md).
   #
-  # The bootstrap/ key sits outside every <env>/ prefix, so no CI role can read or change it.
+  # The bootstrap/ key sits outside every <env>/ prefix. No CI role can write it, and each CI
+  # role's state policy explicitly denies reading it (see ci_access.tf).
   backend "s3" {
     key          = "bootstrap/terraform.tfstate"
     region       = "eu-north-1"
