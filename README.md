@@ -7,8 +7,9 @@ per environment with Terragrunt, and delivered only through GitHub Actions: no o
 changes from a laptop after the one-time bootstrap.
 
 **Status:** the modules, environment definitions and pipelines are complete and pass their
-checks. Nothing is deployed yet; the first deployment follows the bootstrap in
-[Getting started](#getting-started).
+checks. The state bucket and CI identities are bootstrapped, and the plan workflow has been
+verified end to end on a pull request. No environment is deployed yet; that is the next step
+(see [Getting started](#getting-started)).
 
 ## What this demonstrates
 
