@@ -68,6 +68,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
           role-duration-seconds: 3600
+          # The CI user may only sts:AssumeRole. Session tagging needs sts:TagSession, so it is
+          # off, and the run ID in the session name keeps CloudTrail entries traceable.
+          role-skip-session-tagging: true
+          role-session-name: gha-destroy-${{ inputs.environment }}-${{ github.run_id }}
+          retry-max-attempts: 3
           aws-region: ${{ env.AWS_REGION }}
 
       - name: terragrunt destroy
