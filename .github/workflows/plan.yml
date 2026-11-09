@@ -27,15 +27,15 @@ jobs:
     # Fork pull requests are given no secrets, so they are skipped rather than left to fail.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      vars.AWS_PLAN_ROLE_ARN_DEV != '' &&
-      vars.AWS_ACCOUNT_ID != ''
+      vars.AWS_PLAN_ROLE_ARN_DEV != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
     env:
       ENVIRONMENT: dev
-      TG_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      # A secret, not a variable, so GitHub masks the account ID everywhere in the job log.
+      TG_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
       # Secret so addresses (PII) stay out of the repository; GitHub masks it in logs.
       ALERT_EMAILS: ${{ secrets.ALERT_EMAILS }}
       DEV_CERTIFICATE_ARN: ${{ vars.DEV_CERTIFICATE_ARN }}

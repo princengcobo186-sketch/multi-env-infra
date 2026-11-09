@@ -148,7 +148,7 @@ Nothing secret lives in the repository. Set these in the repository settings:
 
 | Where | Name | Value |
 |---|---|---|
-| Repository variable | `AWS_ACCOUNT_ID` | the AWS account ID |
+| Repository secret | `AWS_ACCOUNT_ID` | the AWS account ID (a secret so GitHub masks it in public job logs) |
 | Repository variable | `AWS_PLAN_ROLE_ARN_DEV` | `plan_role_arns["dev"]` from bootstrap |
 | Repository secrets | `AWS_PLAN_ACCESS_KEY_ID_DEV`, `AWS_PLAN_SECRET_ACCESS_KEY_DEV` | set by `scripts/ci-key.sh <repo> dev plan` |
 | Repository secret | `ALERT_EMAILS` | comma-separated alert addresses (may be empty) |
@@ -189,7 +189,7 @@ account settings. The state bucket and CI roles are left in place.
 - **Actions are pinned by commit SHA** and updated through Dependabot pull requests.
 - **Known gaps:** the apply roles use service-level wildcards, and `ReadOnlyAccess` is
   account-wide. Both are documented in `bootstrap/ci_access.tf` and tightened by moving
-  to an account per environment. Plan logs on a public repository are publicly readable.
+  to an account per environment. Plan logs on a public repository are publicly readable; the account ID is masked because it is a secret, but resource names and other values are not.
 
 ## Roadmap
 

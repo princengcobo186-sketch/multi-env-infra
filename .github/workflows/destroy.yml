@@ -36,7 +36,8 @@ jobs:
     env:
       ENVIRONMENT: ${{ inputs.environment }}
       CONFIRM: ${{ inputs.confirm }}
-      TG_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      # A secret, not a variable, so GitHub masks the account ID everywhere in the job log.
+      TG_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
       ALERT_EMAILS: ${{ secrets.ALERT_EMAILS }}
     steps:
       - name: Validate confirmation

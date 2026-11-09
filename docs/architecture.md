@@ -127,6 +127,6 @@ Email subscriptions must be confirmed by each recipient after the first apply.
 ## 7. Public repository considerations
 
 The repository is public. Account IDs are not credentials, but they are not published either:
-`AWS_ACCOUNT_ID` is a repository variable, the AWS credentials action masks it in logs by default, and the alert addresses
-are a secret. Plan output in job logs is publicly readable, so avoid putting sensitive values
+`AWS_ACCOUNT_ID` and the alert addresses are repository secrets, so GitHub masks them in job
+logs (a plain variable is never masked). Plan output in job logs is publicly readable, so avoid putting sensitive values
 in resource names or tags.
