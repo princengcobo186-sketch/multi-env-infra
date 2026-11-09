@@ -1,6 +1,11 @@
 # Root Terragrunt config. Every stack includes this file, so the backend and provider
 # below are generated once here and never written per stack or per environment.
 
+# Terragrunt prefers OpenTofu when both are installed. This repo pins Terraform in
+# .tool-versions, so name it explicitly rather than rely on binary discovery.
+terraform_binary             = "terraform"
+terraform_version_constraint = ">= 1.10"
+
 locals {
   env_vars = read_terragrunt_config(find_in_parent_folders("env.hcl"))
 

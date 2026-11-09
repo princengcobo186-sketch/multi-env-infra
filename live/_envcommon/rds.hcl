@@ -1,5 +1,5 @@
 # Shared definition of the rds stack. Identical in every environment; per-environment
-# differences come from env.hcl. Module inputs are added in Phase 4, alongside the module.
+# differences come from env.hcl.
 
 locals {
   env_vars = read_terragrunt_config(find_in_parent_folders("env.hcl"))
@@ -24,4 +24,29 @@ dependency "vpc" {
     private_subnet_ids = ["subnet-00000004", "subnet-00000005", "subnet-00000006"]
   }
   mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
+}
+
+# Contract with modules/notifications outputs: topic_arn. Same mock rules as the vpc dependency.
+dependency "notifications" {
+  config_path = "../notifications"
+
+  mock_outputs = {
+    topic_arn = "arn:aws:sns:eu-north-1:000000000000:mock-alerts"
+  }
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
+}
+
+inputs = {
+  vpc_id                  = dependency.vpc.outputs.vpc_id
+  private_subnet_ids      = dependency.vpc.outputs.private_subnet_ids
+  instance_class          = local.env_vars.locals.rds_instance_class
+  multi_az                = local.env_vars.locals.rds_multi_az
+  deletion_protection     = local.env_vars.locals.rds_deletion_protection
+  backup_retention_period = local.env_vars.locals.rds_backup_retention
+  skip_final_snapshot     = local.env_vars.locals.rds_skip_final_snapshot
+  alarm_actions           = [dependency.notifications.outputs.topic_arn]
+
+  # Nothing is allowed to connect yet: no compute exists in this repo. A future app stack
+  # passes its security group ID here.
+  allowed_security_group_ids = []
 }

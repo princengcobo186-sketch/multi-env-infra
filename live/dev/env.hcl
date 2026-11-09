@@ -2,7 +2,7 @@
 # Anything not listed here is identical everywhere by design (see _envcommon/).
 locals {
   environment = "dev"
-  region      = "af-south-1"
+  region      = "eu-north-1"
 
   # Non-overlapping CIDRs keep peering/VPN options open later.
   vpc_cidr = "10.10.0.0/16"
@@ -14,6 +14,10 @@ locals {
   rds_multi_az            = false
   rds_deletion_protection = false
   rds_backup_retention    = 1
+  rds_skip_final_snapshot = true
 
   alb_deletion_protection = false
+
+  # Optional here: unset serves plain HTTP. Set DEV_CERTIFICATE_ARN to test HTTPS.
+  certificate_arn = get_env("DEV_CERTIFICATE_ARN", "") == "" ? null : get_env("DEV_CERTIFICATE_ARN")
 }
