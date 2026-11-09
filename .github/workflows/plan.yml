@@ -60,6 +60,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_PLAN_SECRET_ACCESS_KEY_DEV }}
           role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN_DEV }}
           role-duration-seconds: 3600
+          # The CI user may only sts:AssumeRole. Session tagging needs sts:TagSession, so it is
+          # off, and the run ID in the session name keeps CloudTrail entries traceable.
+          role-skip-session-tagging: true
+          role-session-name: gha-plan-dev-${{ github.run_id }}
+          retry-max-attempts: 3
           aws-region: ${{ env.AWS_REGION }}
 
       # The full plan goes to the job log only. Plans and plan files are never uploaded as
